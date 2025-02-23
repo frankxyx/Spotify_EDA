@@ -1,0 +1,282 @@
+---
+title: "Exploratory Data Analysis of Spotify Streaming Trends"
+author: "Frank Xiang"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(readr)
+```
+# Introduction
+This report analyzes streaming trends using the *Most Streamed Spotify Songs 2024* dataset, focusing on artist dominance, distribution patterns, and the impact of viral hits. The analysis identifies whether top artists sustain their popularity through extensive catalogs or rely on a few hit songs. Additionally, it examines platform algorithms, playlist placements, and regional influences on streaming success. By understanding these patterns, we gain deeper insights into the evolving music industry and global listening habits.
+
+```{r}
+spotify_data <- read.csv("/Users/frankmayfield/Documents/R_data/Most Streamed Spotify Songs 2024.csv")
+# head(spotify_data)
+
+# Replace "." and " " with "_", and convert to lowercase
+colnames(spotify_data) <- tolower(gsub("[\\. ]", "_", colnames(spotify_data)))
+# print(colnames(spotify_data))
+
+# Only keep columns that are relevant to music trend
+selected_columns <- c("track", "album_name", "artist", "release_date", "all_time_rank",
+                      "track_score","spotify_streams", "spotify_playlist_count",
+                      "spotify_playlist_reach", "spotify_popularity",
+                      "youtube_views", "youtube_likes", "youtube_playlist_reach",
+                      "tiktok_posts", "tiktok_views", "tiktok_likes")
+
+spotify_data <- spotify_data %>% dplyr::select(all_of(selected_columns))
+
+spotify_data$release_date <- as.Date(spotify_data$release_date, format="%m/%d/%Y")
+
+# the following columns should be numeric, but they are stored in the char data type (e.g. 9,000)
+# we want to remove the comma and covert them to numeric values
+numeric_columns <- c("all_time_rank", "spotify_streams", "spotify_playlist_count",
+                     "spotify_playlist_reach", "youtube_views", "youtube_likes", 
+                     "youtube_playlist_reach","tiktok_posts", "tiktok_views", "tiktok_likes")
+spotify_data[numeric_columns] <- lapply(spotify_data[numeric_columns], function(x) {
+  as.numeric(gsub(",", "", x))
+})
+
+# head(spotify_data)
+```
+
+# Data Preprocessing and Cleaning
+To ensure consistency, the dataset was cleaned and preprocessed before analysis:
+
+- Column names were standardized (lowercase, underscores replacing spaces).
+- Dates were formatted for accurate time-based analysis.
+- Numeric columns (e.g., spotify_streams, youtube_views) were converted by removing commas.
+- Handling Missing Data:
+  - Columns with over 5% missing data (*spotify_popularity*, *youtube_views*, *tiktok_posts*) were removed to avoid biases.
+  - Median imputation was applied to remaining missing values to prevent distortions from outliers.
+
+```{r}
+# Print message before checking missing value counts
+cat("\n🔍 Checking missing values in each selected column:\n")
+
+# Count missing values in each numeric column
+missing_counts <- colSums(is.na(spotify_data[numeric_columns]))
+
+# Convert to a nicely formatted data frame
+missing_counts_df <- data.frame(
+  Column = names(missing_counts), 
+  Missing_Values = missing_counts
+)
+
+# Print missing values per column
+print(missing_counts_df, row.names = FALSE)
+
+
+# Print message before calculating missing percentages
+cat("\n📊 Calculating missing value percentages in each selected column:\n")
+
+# Calculate missing percentages
+missing_percent <- colSums(is.na(spotify_data[numeric_columns])) / nrow(spotify_data) * 100
+missing_percent <- round(missing_percent, 2)
+
+# Convert to formatted data frame with "%" symbol
+missing_percent_df <- data.frame(
+  Column = names(missing_percent), 
+  Percentage = paste0(missing_percent, "%")
+)
+
+# Print nicely formatted missing percentages
+print(missing_percent_df, row.names = FALSE)
+```
+# Limitations
+
+Despite these efforts, the dataset has some constraints:
+
+- Selection bias: It only includes top-streamed songs, ignoring lesser-known or emerging artists.  
+- Algorithmic influences: Streams may be impacted by Spotify's recommendation system, playlist placements, and promotional strategies.  
+- Platform limitation: The dataset is Spotify-centric, meaning trends on Apple Music, YouTube, and TikTok may differ. Future analyses should integrate multi-platform data for a more comprehensive view of music consumption trends.
+
+
+```{r}
+# Ensure numeric_columns contains only valid columns in spotify_data
+numeric_columns <- intersect(numeric_columns, colnames(spotify_data))
+
+# Print message before replacing missing values
+# cat("\n🛠 Replacing missing values in numeric columns with the median:\n")
+
+# Replace missing values in numeric columns with the median
+for (col in numeric_columns) {
+  if (any(is.na(spotify_data[[col]]))) {
+    spotify_data[[col]][is.na(spotify_data[[col]])] <- median(spotify_data[[col]], na.rm = TRUE)
+  }
+}
+
+# Print message before checking missing values after imputation
+# cat("\n🔍 Verifying missing values after imputation:\n")
+
+# Count missing values after imputation
+missing_values_after_imputation <- colSums(is.na(spotify_data[numeric_columns]))
+
+# Convert to a formatted data frame
+missing_values_df <- data.frame(
+  Column = names(missing_values_after_imputation), 
+  Missing_After_Imputation = paste0(missing_values_after_imputation, " (0 expected)")
+)
+
+# Print missing value status for each column
+# print(missing_values_df, row.names = FALSE)
+```
+
+```{r}
+# Aggregate total streams per artist
+artist_streams <- spotify_data %>%
+  group_by(artist) %>%
+  summarise(total_streams = sum(spotify_streams, na.rm = TRUE)) %>%
+  arrange(desc(total_streams))
+
+# Calculate total streams for top 20 artists and the rest
+top_20_streams <- sum(artist_streams$total_streams[1:20], na.rm = TRUE)
+rest_streams <- sum(artist_streams$total_streams[-(1:20)], na.rm = TRUE)
+
+# Create a new dataset for the pie chart
+pie_data <- data.frame(
+  Category = c("Top 20 Artists", "All Other Artists"),
+  Total_Streams = c(top_20_streams, rest_streams)
+)
+
+# Create the pie chart
+ggplot(pie_data, aes(x = "", y = Total_Streams, fill = Category)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) + 
+  theme_minimal() +
+  labs(title = "Proportion of Total Streams: Top 20 Artists vs. All Others") +
+  theme(axis.text.x = element_blank(), # Remove x-axis labels
+        panel.grid = element_blank()) +
+  scale_fill_manual(values = c("blue", "grey")) +  # Blue for Top 20, Grey for Others
+  geom_text(aes(label = paste0(round(Total_Streams / sum(Total_Streams) * 100, 1), "%")),
+            position = position_stack(vjust = 0.5), color = "white", size = 5)
+
+# Count total unique artists in the dataset
+total_artists <- spotify_data %>% summarise(unique_artists = n_distinct(artist)) %>% pull(unique_artists)
+
+# Calculate percentage of top 20 artists relative to total artists
+top_20_artist_percentage <- (20 / total_artists) * 100
+
+# Print the result
+cat("Total number of artists in dataset:", total_artists, "\n")
+cat("Percentage of top 20 artists relative to total artists:", round(top_20_artist_percentage, 2), "%\n")
+cat("Comparison: Top 20 artists account for 21.9% of total streams.\n")
+```
+
+# Disproportionate Streaming Dominance
+The finding reveals a highly skewed distribution of streaming success, where just 1% of artists (20 out of 2000) accounts for 21.9% of total streams.:
+
+- Streaming Market is highly concentrated:
+  - The fact that only 1% of artists control over one-fifth of total streams indicates that success is concentrated among a few global superstars.
+  - This follows Pareto's Principle (80/20 rule), where a small fraction of participants drive the majority of the impact.
+  
+- Barriers to Entry for Emerging Artists:
+  - Since the top 20 artists dominate streaming, it suggests fewer opportunities for new or independent musicians to break into the mainstream.
+  - Playlisting, Algorithmic Recommendations and Label Influence likely reinforce this imblance, favoring well-established artists.
+  
+- Algorithmic & Industry Reinforcement of Top Artists:
+  - Spotify's recommendation system and curated playlists likely amplify the streams of already successful artists, making them even more dominant.
+  - Major record labels and marketing campaigns further boost visibility, creating a cycle of sustained dominance.
+
+```{r}
+ 
+```
+
+The top four artists, The Weeknd, Bad Bunny, Drake, and Taylor Swift, have significantly higher total stream counts compared to the rest of the ranking. The Weeknd leads with over 37 billion streams, while artists like Dua Lipa and Maroon 5, ranked near the bottom of top 20, have around 16 billion streams which is less than half of the leader’s total. This massive disparity suggests a highly skewed distribution, likely following a power-law trend commonly seen in digital media, where a small number of artists dominate while the majority accumulate significantly fewer streams.
+
+One interesting observation is the sharp drop in total streams after the top four artists. While artists like Post Malone, Ed Sheeran, and Ariana Grande still have impressive numbers, they fall far behind the leaders. This could indicate that the top four have achieved sustained global appeal across multiple albums and songs, rather than relying on a few viral hits.
+
+Another notable trend is genre and market influence. Bad Bunny is the only Latin artist in the top 10, demonstrating the rising influence of Latin music worldwide. However, the continued dominance of English-language artists suggests that the Western music industry still holds the most influence in global streaming trends. The presence of artists like Eminem and Imagine Dragons, who peaked in earlier decades, also shows the long-lasting popularity of certain artists, likely due to catalog streaming—where older songs continue to accumulate streams over time.
+
+A key question raised by this analysis is: do these artists maintain their ranking due to a consistent catalog of hits, or are they driven by a few massive viral songs? Artists like Drake and Taylor Swift have built their careers through multiple high-streaming albums, while emerging artists like Olivia Rodrigo may have reached the top due to a few blockbuster singles. A deeper look into Total Streams vs. Most Streamed Songs on each artist will provide more insights.
+
+```{r}
+# Aggregate total streams per artist
+artist_streams <- spotify_data %>%
+  group_by(artist) %>%
+  summarise(total_streams = sum(spotify_streams, na.rm = TRUE))
+
+# Get the top 20 artists by total streams
+top_artists_streams <- artist_streams %>%
+  arrange(desc(total_streams)) %>%
+  head(20)  # Adjust this number as needed
+
+# Find the most popular song for each artist
+most_popular_song <- spotify_data %>%
+  group_by(artist) %>%
+  summarise(most_popular_song_streams = max(spotify_streams, na.rm = TRUE))
+
+# Merge with artist_streams to include both total and most popular song streams
+artist_streams <- artist_streams %>%
+  left_join(most_popular_song, by = "artist")
+
+# Take the top 20 artists
+top_artists_streams <- artist_streams %>%
+  arrange(desc(total_streams)) %>%
+  head(20)
+
+# Convert data into long format for plotting
+artist_streams_long <- top_artists_streams %>%
+  pivot_longer(cols = c(total_streams, most_popular_song_streams),
+               names_to = "Metric", values_to = "Streams")
+
+# Plot with improved formatting
+ggplot(artist_streams_long, aes(x = reorder(artist, Streams), y = Streams, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  coord_flip() + 
+  theme_minimal() +
+  labs(title = "Top 20 Artists: Total Streams vs. Most Streamed Song",
+       x = "Artist",
+       y = "Streams") + 
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+        axis.text.y = element_text(size = 10),  # Increase y-axis text size
+        legend.title = element_blank()) +
+  scale_y_continuous(labels = label_number(scale = 1e-9, suffix = "B")) +  
+  scale_fill_manual(values = c("total_streams" = "blue", "most_popular_song_streams" = "red"),
+                    labels = c("Most Streamed Song", "Total Streams"))
+```
+
+The analysis of total streams vs. most streamed song on each artist reveals insightful trends regarding artist success and consistency. A clear takeaway is that most top artists do not rely solely on a single hit song to achieve their massive streaming numbers. Instead, their total streams (blue bars) are significantly higher than their most-streamed song (red bars), indicating a broad and consistently successful catalog rather than a one-hit-wonder phenomenon.
+
+Artists like The Weeknd, Bad Bunny, and Drake exemplify this trend, where their total streams are several times greater than their highest-streamed song. This suggests that their popularity is not concentrated in just one track, but rather, they have multiple hit songs that continue accumulating streams over time. These artists often dominate streaming platforms due to their frequent album releases, strong fan bases, and lasting relevance across different music trends.
+
+Conversely, some artists, particularly Olivia Rodrigo and Doja Cat, show a higher proportion of their total streams coming from a single song. This could indicate greater reliance on a few viral hits, meaning their careers may still be in a phase where a few songs account for the majority of their success. If these emerging artists continue to release hit songs, their streaming distribution may begin to resemble the broader catalog success of artists like Taylor Swift or Eminem.
+
+The case of Eminem and Taylor Swift is particularly notable. These artists have been in the industry for decades, meaning their total streams are spread across numerous albums, allowing them to maintain consistent streaming numbers over time. This highlights the role of legacy streaming, where older songs continue to perform well, even years after release. Catalog streaming is an important factor in the digital music era, as artists with a large body of work continue to accumulate streams without relying on new releases.
+Another interesting takeaway is the presence of certain international artists, such as Bad Bunny, whose dominance highlights the increasing globalization of music. While English-speaking artists still lead the rankings, the fact that Latin music is achieving comparable streaming numbers suggests changing consumer behavior and the growing influence of non-English songs in global markets.
+
+## Responses to AI related Questions
+
+### **1. Which GenAI tool(s) did you decide to use?**  
+I used **ChatGPT** as my primary GenAI tool to assist with debugging R code, structuring my exploratory data analysis (EDA), and refining my report content. ChatGPT was particularly helpful in explaining functions, troubleshooting errors, and suggesting improvements in my data curation process.  
+
+### **2. Give your prompts, and a brief explanation of why you chose them.**  
+Some of my key prompts included:  
+- **"Why am I getting an error "xxx do not exist" in my RMarkdown file when knitting?"** → Used to debug an issue related to missing objects.  
+- **"How can I improve the visualization of my plots in ggplot2?"** → Asked for better ways to format, style, and structure my plots to make them clearer and more visually appealing. This included recommendations on axis scaling, color schemes, annotations, and layout improvements..  
+- **"What does `<dbl>` mean in R?"** → Used to clarify R data types when interpreting my dataset.  
+
+I chose these prompts to **clarify technical issues** and **ensure best practices in R coding** for data cleaning and visualization.  
+
+### **3. Did AI produce correct code, or did/would you need to change anything?**  
+Overall, ChatGPT provided **mostly correct code**, but in some cases, I needed to **make slight modifications**.  
+- When using `dplyr::select()`, the AI initially suggested `all_of(selected_columns)`, but I had to ensure `selected_columns` was correctly defined as a character vector.  
+- For counting missing values in **only numeric columns**, I had to modify the AI’s initial approach to subset `numeric_columns` explicitly.  
+
+### **4. In what ways were the GenAI tools helpful?**  
+- **Debugging & Fixing Errors**: ChatGPT quickly helped diagnose `knitting` errors and missing objects in my environment.  
+- **Code Optimization**: AI improved my missing data handling and suggested **better imputation methods (median vs. mean)**.  
+- **Time Efficiency**: Instead of searching Stack Overflow for each issue, I got **immediate responses** with explanations.  
+
+### **5. In what ways were the GenAI tools unsatisfactory?**  
+- **Context Limitations**: Sometimes, AI didn’t recognize **previous variables in my script**, requiring me to **re-explain dependencies**.  
+- **Errors in Specific Code Scenarios**: AI occasionally provided solutions that **assumed missing data was uniform** or **ignored edge cases (e.g., categorical columns in missing value analysis)**.  
+- **Overgeneralized Explanations**: Some responses were too **high-level**, requiring **more fine-tuning** for practical implementation in my dataset.  
